@@ -30,7 +30,10 @@ exports.uploadTourImages = upload.fields([
 // upload.array('images', 5) req.files
 
 exports.resizeTourImages = catchAsync(async (req, res, next) => {
-  if (!req.files.imageCover || !req.files.images) return next();
+  // multer leaves req.files undefined when the request carries no files at
+  // all, so a plain PATCH (e.g. changing only the price) must not dereference
+  // it. Previously this threw a TypeError and surfaced as a 500.
+  if (!req.files || !req.files.imageCover || !req.files.images) return next();
 
   // 1) Cover image
   req.body.imageCover = `tour-${req.params.id}-${Date.now()}-cover.jpeg`;
@@ -61,9 +64,20 @@ exports.resizeTourImages = catchAsync(async (req, res, next) => {
 });
 
 exports.aliasTopTours = (req, res, next) => {
-  req.query.limit = '5';
-  req.query.sort = '-ratingsAverage,price';
-  req.query.fields = 'name,price,ratingsAverage,summary,difficulty';
+  // Express 5 serves req.query from a getter that re-parses the query string
+  // on every access, so assigning to req.query.limit is silently discarded
+  // (this worked on Express 4). Redefine the property instead.
+  Object.defineProperty(req, 'query', {
+    value: {
+      ...req.query,
+      limit: '5',
+      sort: '-ratingsAverage,price',
+      fields: 'name,price,ratingsAverage,summary,difficulty'
+    },
+    writable: true,
+    configurable: true,
+    enumerable: true
+  });
   next();
 };
 
@@ -159,17 +173,23 @@ exports.getToursWithin = catchAsync(async (req, res, next) => {
 
   const radius = unit === 'mi' ? distance / 3963.2 : distance / 6378.1;
 
+  // Guard before the values are used, and return so execution stops -- the
+  // missing `return` meant the handler carried on and tried to send a second
+  // response after queueing the error.
   if (!lat || !lng) {
-    next(
+    return next(
       new AppError(
-        'Please provide latitutr and longitude in the format lat,lng.',
+        'Please provide latitude and longitude in the format lat,lng.',
         400
       )
     );
   }
 
+  // $centerSphere requires numbers; split() yields strings.
   const tours = await Tour.find({
-    startLocation: { $geoWithin: { $centerSphere: [[lng, lat], radius] } }
+    startLocation: {
+      $geoWithin: { $centerSphere: [[lng * 1, lat * 1], radius] }
+    }
   });
 
   res.status(200).json({
@@ -188,9 +208,9 @@ exports.getDistances = catchAsync(async (req, res, next) => {
   const multiplier = unit === 'mi' ? 0.000621371 : 0.001;
 
   if (!lat || !lng) {
-    next(
+    return next(
       new AppError(
-        'Please provide latitutr and longitude in the format lat,lng.',
+        'Please provide latitude and longitude in the format lat,lng.',
         400
       )
     );

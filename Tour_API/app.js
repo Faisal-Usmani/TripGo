@@ -7,6 +7,7 @@ const morgan = require('morgan');
 // const xss = require('xss-clean');
 // const hpp = require('hpp');
 const AppError = require('./utils/appError');
+const sanitizeMongo = require('./utils/sanitizeMongo');
 const globalErrorHandler = require('./controller/errorController');
 const tourRouter = require('./routes/tourRoute');
 const userRouter = require('./routes/userRoute');
@@ -15,6 +16,12 @@ const app = express();
 
 app.set('view engine', 'pug');
 app.set('views', path.join(__dirname, 'views'));
+
+// Express 5 defaults to the 'simple' query parser, which leaves
+// ?price[gte]=500 as the literal key "price[gte]" and breaks APIFeatures.
+// 'extended' restores nested parsing; sanitizeMongo (below) closes the
+// NoSQL-injection surface that re-enabling it would otherwise open.
+app.set('query parser', 'extended');
 
 // 1) GLOBAL MIDDLEWARES
 // Set security HTTP headers
@@ -36,8 +43,9 @@ if (process.env.NODE_ENV === 'development') {
 // Body parser, reading data from body into req.body
 app.use(express.json({ limit: '10kb' }));
 
-// Data sanitization against NoSQL query injection
-//app.use(mongoSanitize());
+// Data sanitization against NoSQL query injection.
+// Must run after the body parser and before any router.
+app.use(sanitizeMongo);
 
 // Data sanitization against XSS
 // app.use(xss());
@@ -62,7 +70,6 @@ app.use(express.static(`${__dirname}/public`));
 // Test middleware
 app.use((req, res, next) => {
   req.requestTime = new Date().toISOString();
-  console.log(req.headers);
   next();
 });
 
@@ -72,7 +79,6 @@ app.use('/api/v1/users', userRouter);
 app.use('/api/v1/reviews', reviewRouter);
 
 app.use((req, res, next) => {
-  console.log('Incoming URL:', req.originalUrl);
   next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404));
 });
 

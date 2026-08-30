@@ -6,9 +6,13 @@ const handleCastErrorDB = err => {
 };
 
 const handleDuplicateFieldsDB = err => {
-  console.log(err);
-  const value = err.message.match(/(["'])(\\?.)*?\1/)[0];
-  console.log(value);
+  // The driver message format varies between versions, so fall back to the
+  // keyValue field rather than letting a failed match throw inside the
+  // error handler itself.
+  const match = err.message && err.message.match(/(["'])(\\?.)*?\1/);
+  const value = match
+    ? match[0]
+    : JSON.stringify(err.keyValue || {});
 
   const message = `Duplicate field value: ${value}. Please use another value!`;
   return new AppError(message, 400);
@@ -57,23 +61,28 @@ const sendErrorProd = (err, res) => {
 };
 
 module.exports = (err, req, res, next) => {
-  // console.log(err.stack);
-
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';
 
   if (process.env.NODE_ENV === 'development') {
     sendErrorDev(err, res);
-  } else if (process.env.NODE_ENV === 'production') {
-    let error = { ...err };
-
-    if (error.name === 'CastError') error = handleCastErrorDB(error);
-    if (error.code === 11000) error = handleDuplicateFieldsDB(error);
-    if (error.name === 'ValidationError')
-      error = handleValidationErrorDB(error);
-    if (error.name === 'JsonWebTokenError') error = handleJWTError();
-    if (error.name === 'TokenExpiredError') error = handleJWTExpiredError();
-
-    sendErrorProd(error, res);
+    return;
   }
+
+  // Anything that is not explicitly 'development' (production, staging,
+  // unset, typo'd) falls through to the safe production path. Previously an
+  // unrecognised NODE_ENV sent no response at all and the request hung.
+  //
+  // Note: `err` is NOT spread into a plain object here. `name` and `message`
+  // live on Error.prototype, so `{ ...err }` silently drops both, which made
+  // every branch below unreachable and stripped the message from responses.
+  let error = err;
+
+  if (err.name === 'CastError') error = handleCastErrorDB(err);
+  else if (err.code === 11000) error = handleDuplicateFieldsDB(err);
+  else if (err.name === 'ValidationError') error = handleValidationErrorDB(err);
+  else if (err.name === 'JsonWebTokenError') error = handleJWTError();
+  else if (err.name === 'TokenExpiredError') error = handleJWTExpiredError();
+
+  sendErrorProd(error, res);
 };

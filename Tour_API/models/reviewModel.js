@@ -88,13 +88,17 @@ reviewSchema.post('save', function() {
 // findByIdAndUpdate
 // findByIdAndDelete
 reviewSchema.pre(/^findOneAnd/, async function(next) {
-  this.r = await this.findOne();
-  console.log(this.r);
+  // Issue a NEW query against the model rather than re-running `this`.
+  // Mongoose 8 throws 'Query was already executed' if the same query object
+  // is executed twice, which `await this.findOne()` did.
+  this.r = await this.model.findOne(this.getQuery());
   next();
 });
 
 reviewSchema.post(/^findOneAnd/, async function() {
-  // await this.findOne(); does NOT work here, query has already executed
+  // await this.findOne(); does NOT work here, query has already executed.
+  // this.r is null when the id matched nothing -- dereferencing it threw.
+  if (!this.r) return;
   await this.r.constructor.calcAverageRatings(this.r.tour);
 });
 

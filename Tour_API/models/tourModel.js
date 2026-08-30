@@ -70,7 +70,10 @@ const tourSchema = new mongoose.Schema(
     images: [String],
     createdAt: {
       type: Date,
-      default: Date.now(),
+      // Pass the function itself, not its result. Date.now() was evaluated
+      // once when this module loaded, so every tour shared the server's
+      // boot timestamp.
+      default: Date.now,
       select: false
     },
     startDates: [Date],
@@ -114,6 +117,15 @@ const tourSchema = new mongoose.Schema(
     toObject: { virtuals: true }
   }
 );
+
+// INDEXES
+// $geoNear (used by getDistances) is rejected by MongoDB unless the queried
+// field carries a 2dsphere index, so that endpoint could never succeed.
+tourSchema.index({ startLocation: '2dsphere' });
+// Supports the common price/rating sort-and-filter path, including
+// aliasTopTours.
+tourSchema.index({ price: 1, ratingsAverage: -1 });
+tourSchema.index({ slug: 1 });
 
 tourSchema.virtual('durationWeeks').get(function() {
   return this.duration / 7;
@@ -167,7 +179,6 @@ tourSchema.pre(/^find/, function(next) {
 });
 
 tourSchema.post(/^find/, function(docs, next) {
-  console.log(`Query took ${Date.now() - this.start} milliseconds!`);
   next();
 });
 
